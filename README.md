@@ -213,6 +213,6 @@ MIT License - feel free to use and modify.
 
 ## 👤 Author
 
-**Mae** - M2 Statistics & Econometrics, University of Strasbourg
+**Rayan** - Masters in Statistics & Econometrics, University of Strasbourg
 
 *Building quantitative tools for finance applications*
