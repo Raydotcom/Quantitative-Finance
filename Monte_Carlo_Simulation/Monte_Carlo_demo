@@ -1,0 +1,460 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Monte Carlo Simulation for Portfolio Returns\n",
+    "\n",
+    "**Goal:** Simulate thousands of price paths and estimate future portfolio value distribution.\n",
+    "\n",
+    "## What You'll Learn:\n",
+    "- Geometric Brownian Motion (GBM)\n",
+    "- Drift, volatility & randomness in market outcomes\n",
+    "- Basic Monte Carlo framework\n",
+    "- Value at Risk (VaR) estimation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Install dependencies if needed\n",
+    "%pip install numpy scipy yfinance pandas matplotlib --quiet"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import yfinance as yf\n",
+    "import matplotlib.pyplot as plt\n",
+    "from typing import Tuple, Dict, Optional\n",
+    "\n",
+    "print(f\"NumPy: {np.__version__}\")\n",
+    "print(f\"Pandas: {pd.__version__}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Step 1 – Geometric Brownian Motion (GBM)\n",
+    "\n",
+    "The GBM model describes the stochastic evolution of an asset price:\n",
+    "\n",
+    "$$dS = \\mu S \\, dt + \\sigma S \\, dW$$\n",
+    "\n",
+    "Where:\n",
+    "- $S$ : Asset price\n",
+    "- $\\mu$ : Drift (annualized expected return)\n",
+    "- $\\sigma$ : Annualized volatility\n",
+    "- $W$ : Wiener process (Brownian motion)\n",
+    "\n",
+    "### Exact Solution:\n",
+    "\n",
+    "$$S(t) = S(0) \\exp\\left[\\left(\\mu - \\frac{\\sigma^2}{2}\\right)t + \\sigma W(t)\\right]$$\n",
+    "\n",
+    "### Discretization for Simulation:\n",
+    "\n",
+    "$$S_{t+\\Delta t} = S_t \\exp\\left[\\left(\\mu - \\frac{\\sigma^2}{2}\\right)\\Delta t + \\sigma\\sqrt{\\Delta t}\\,Z\\right]$$\n",
+    "\n",
+    "where $Z \\sim \\mathcal{N}(0,1)$"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Step 2 – Download Historical Data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Download S&P 500 data\n",
+    "ticker = \"^GSPC\"\n",
+    "period = \"5y\"\n",
+    "\n",
+    "print(f\"Downloading {ticker} data ({period})...\")\n",
+    "data = yf.download(ticker, period=period, progress=False)\n",
+    "print(f\"  -> {len(data)} trading days loaded\")\n",
+    "print(f\"  -> Date range: {data.index[0].strftime('%Y-%m-%d')} to {data.index[-1].strftime('%Y-%m-%d')}\")\n",
+    "\n",
+    "data.tail()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Step 3 – Estimate Parameters (μ and σ)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Calculate log returns\n",
+    "prices = data['Close'].squeeze()  # Force to Series (handles MultiIndex)\n",
+    "log_returns = np.log(prices / prices.shift(1)).dropna()\n",
+    "\n",
+    "# Annualize (252 trading days)\n",
+    "daily_mu = float(log_returns.mean())      # Force to float\n",
+    "daily_sigma = float(log_returns.std())    # Force to float\n",
+    "\n",
+    "mu = daily_mu * 252\n",
+    "sigma = daily_sigma * np.sqrt(252)\n",
+    "\n",
+    "print(\"=\"*50)\n",
+    "print(\"ESTIMATED PARAMETERS\")\n",
+    "print(\"=\"*50)\n",
+    "print(f\"Daily mean return:        {daily_mu*100:.4f}%\")\n",
+    "print(f\"Daily volatility:         {daily_sigma*100:.4f}%\")\n",
+    "print()\n",
+    "print(f\"Annualized return (mu):   {mu*100:.2f}%\")\n",
+    "print(f\"Annualized volatility (sigma): {sigma*100:.2f}%\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Visualize historical returns distribution\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(14, 5))\n",
+    "\n",
+    "# Price history\n",
+    "axes[0].plot(prices.index, prices.values)\n",
+    "axes[0].set_title(f'{ticker} - Historical Prices')\n",
+    "axes[0].set_xlabel('Date')\n",
+    "axes[0].set_ylabel('Price ($)')\n",
+    "axes[0].grid(True, alpha=0.3)\n",
+    "\n",
+    "# Returns distribution\n",
+    "axes[1].hist(log_returns, bins=50, density=True, alpha=0.7, edgecolor='white')\n",
+    "axes[1].axvline(daily_mu, color='red', linestyle='--', label=f'Mean: {daily_mu*100:.3f}%')\n",
+    "axes[1].set_title('Distribution of Daily Log Returns')\n",
+    "axes[1].set_xlabel('Log Return')\n",
+    "axes[1].set_ylabel('Density')\n",
+    "axes[1].legend()\n",
+    "axes[1].grid(True, alpha=0.3)\n",
+    "\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Step 4 – Simulate Price Paths (GBM)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def simulate_gbm_paths(\n",
+    "    S0: float,\n",
+    "    mu: float,\n",
+    "    sigma: float,\n",
+    "    T: float,\n",
+    "    n_simulations: int,\n",
+    "    n_steps: int,\n",
+    "    seed: int = 42\n",
+    ") -> np.ndarray:\n",
+    "    \"\"\"\n",
+    "    Simulate price paths using Geometric Brownian Motion.\n",
+    "    \n",
+    "    Parameters:\n",
+    "        S0: Initial price\n",
+    "        mu: Drift (annualized)\n",
+    "        sigma: Volatility (annualized)\n",
+    "        T: Time horizon in years\n",
+    "        n_simulations: Number of paths to simulate\n",
+    "        n_steps: Number of time steps\n",
+    "        seed: Random seed for reproducibility\n",
+    "        \n",
+    "    Returns:\n",
+    "        np.ndarray of shape (n_steps+1, n_simulations)\n",
+    "    \"\"\"\n",
+    "    np.random.seed(seed)\n",
+    "    \n",
+    "    dt = T / n_steps\n",
+    "    \n",
+    "    # Initialize price matrix\n",
+    "    prices = np.zeros((n_steps + 1, n_simulations))\n",
+    "    prices[0] = S0\n",
+    "    \n",
+    "    # Generate random shocks\n",
+    "    Z = np.random.standard_normal((n_steps, n_simulations))\n",
+    "    \n",
+    "    # Simulate using exact GBM solution\n",
+    "    for t in range(1, n_steps + 1):\n",
+    "        prices[t] = prices[t-1] * np.exp(\n",
+    "            (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z[t-1]\n",
+    "        )\n",
+    "    \n",
+    "    return prices"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Simulation parameters\n",
+    "S0 = 10000          # Initial portfolio value ($)\n",
+    "T = 1.0             # 1 year horizon\n",
+    "n_simulations = 10000\n",
+    "n_steps = 252       # Daily steps (trading days)\n",
+    "\n",
+    "print(\"Running Monte Carlo simulation...\")\n",
+    "paths = simulate_gbm_paths(S0, mu, sigma, T, n_simulations, n_steps)\n",
+    "print(f\"  -> Simulated {n_simulations:,} paths with {n_steps} steps each\")\n",
+    "print(f\"  -> Shape: {paths.shape}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Step 5 – Analyze Results"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Final values\n",
+    "final_values = paths[-1]\n",
+    "returns = (final_values - S0) / S0\n",
+    "\n",
+    "# Compute statistics\n",
+    "stats = {\n",
+    "    'mean': np.mean(final_values),\n",
+    "    'median': np.median(final_values),\n",
+    "    'std': np.std(final_values),\n",
+    "    'min': np.min(final_values),\n",
+    "    'max': np.max(final_values),\n",
+    "    'percentile_5': np.percentile(final_values, 5),\n",
+    "    'percentile_25': np.percentile(final_values, 25),\n",
+    "    'percentile_75': np.percentile(final_values, 75),\n",
+    "    'percentile_95': np.percentile(final_values, 95),\n",
+    "    'prob_profit': np.mean(returns > 0),\n",
+    "    'prob_loss_10pct': np.mean(returns < -0.10),\n",
+    "    'mean_return': np.mean(returns),\n",
+    "    'median_return': np.median(returns),\n",
+    "}\n",
+    "\n",
+    "print(\"=\"*60)\n",
+    "print(\"MONTE CARLO SIMULATION RESULTS\")\n",
+    "print(\"=\"*60)\n",
+    "print(f\"\\nSimulation Parameters:\")\n",
+    "print(f\"  Initial Investment: ${S0:,.2f}\")\n",
+    "print(f\"  Time Horizon: {T} year(s)\")\n",
+    "print(f\"  Number of Simulations: {n_simulations:,}\")\n",
+    "print(f\"  Estimated mu: {mu*100:.2f}%\")\n",
+    "print(f\"  Estimated sigma: {sigma*100:.2f}%\")\n",
+    "\n",
+    "print(f\"\\n{'Portfolio Value Statistics':^50}\")\n",
+    "print(\"-\"*50)\n",
+    "print(f\"  Mean:         ${stats['mean']:>12,.2f}\")\n",
+    "print(f\"  Median:       ${stats['median']:>12,.2f}\")\n",
+    "print(f\"  Std Dev:      ${stats['std']:>12,.2f}\")\n",
+    "print(f\"  Min:          ${stats['min']:>12,.2f}\")\n",
+    "print(f\"  Max:          ${stats['max']:>12,.2f}\")\n",
+    "\n",
+    "print(f\"\\n{'Percentiles':^50}\")\n",
+    "print(\"-\"*50)\n",
+    "print(f\"  5th:          ${stats['percentile_5']:>12,.2f}\")\n",
+    "print(f\"  25th:         ${stats['percentile_25']:>12,.2f}\")\n",
+    "print(f\"  75th:         ${stats['percentile_75']:>12,.2f}\")\n",
+    "print(f\"  95th:         ${stats['percentile_95']:>12,.2f}\")\n",
+    "\n",
+    "print(f\"\\n{'Risk Metrics':^50}\")\n",
+    "print(\"-\"*50)\n",
+    "print(f\"  VaR 95% (5th percentile):  ${stats['percentile_5']:>10,.2f}\")\n",
+    "print(f\"  Probability of Profit:     {stats['prob_profit']*100:>10.2f}%\")\n",
+    "print(f\"  Probability of >10% Loss:  {stats['prob_loss_10pct']*100:>10.2f}%\")\n",
+    "\n",
+    "print(f\"\\n{'Expected Returns':^50}\")\n",
+    "print(\"-\"*50)\n",
+    "print(f\"  Mean Return:   {stats['mean_return']*100:>10.2f}%\")\n",
+    "print(f\"  Median Return: {stats['median_return']*100:>10.2f}%\")\n",
+    "print(\"=\"*60)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Step 6 – Visualize Results"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, axes = plt.subplots(1, 2, figsize=(14, 5))\n",
+    "\n",
+    "time_axis = np.linspace(0, T, n_steps + 1)\n",
+    "\n",
+    "# --- Plot 1: Sample paths ---\n",
+    "ax1 = axes[0]\n",
+    "n_paths_to_show = 100\n",
+    "\n",
+    "for i in range(n_paths_to_show):\n",
+    "    ax1.plot(time_axis, paths[:, i], alpha=0.2, linewidth=0.5)\n",
+    "\n",
+    "# Mean and percentiles\n",
+    "ax1.plot(time_axis, np.mean(paths, axis=1), 'r-', linewidth=2, label='Mean Path')\n",
+    "ax1.plot(time_axis, np.percentile(paths, 5, axis=1), 'k--', linewidth=1.5, label='5th Percentile')\n",
+    "ax1.plot(time_axis, np.percentile(paths, 95, axis=1), 'k--', linewidth=1.5, label='95th Percentile')\n",
+    "ax1.axhline(S0, color='green', linestyle=':', linewidth=2, label='Initial Value')\n",
+    "\n",
+    "ax1.set_xlabel('Time (years)')\n",
+    "ax1.set_ylabel('Portfolio Value ($)')\n",
+    "ax1.set_title(f'Simulated Price Paths ({n_simulations:,} simulations)')\n",
+    "ax1.legend(loc='upper left')\n",
+    "ax1.grid(True, alpha=0.3)\n",
+    "\n",
+    "# --- Plot 2: Distribution ---\n",
+    "ax2 = axes[1]\n",
+    "ax2.hist(final_values, bins=50, density=True, alpha=0.7, color='steelblue', edgecolor='white')\n",
+    "\n",
+    "ax2.axvline(S0, color='green', linestyle='--', linewidth=2, label=f'Initial: ${S0:,.0f}')\n",
+    "ax2.axvline(stats['mean'], color='red', linestyle='-', linewidth=2, label=f'Mean: ${stats[\"mean\"]:,.0f}')\n",
+    "ax2.axvline(stats['percentile_5'], color='orange', linestyle=':', linewidth=2, label=f'VaR 95%: ${stats[\"percentile_5\"]:,.0f}')\n",
+    "\n",
+    "ax2.set_xlabel('Final Portfolio Value ($)')\n",
+    "ax2.set_ylabel('Density')\n",
+    "ax2.set_title('Distribution of Final Portfolio Values')\n",
+    "ax2.legend(loc='upper right')\n",
+    "ax2.grid(True, alpha=0.3)\n",
+    "\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Interpretation of Results\n",
+    "\n",
+    "### 1. Simulated Price Paths\n",
+    "- The **red line** represents the mean path across all simulations\n",
+    "- The **dashed black lines** show the 90% confidence interval (5th and 95th percentiles)\n",
+    "- Dispersion increases over time — this is the effect of compounding volatility\n",
+    "\n",
+    "### 2. Final Value Distribution\n",
+    "- The distribution is **log-normal** (characteristic of GBM)\n",
+    "- Positive skewness: potential gains are unlimited, while losses are bounded at -100%\n",
+    "- The mean is typically higher than the median due to this asymmetry\n",
+    "\n",
+    "### 3. Value at Risk (VaR)\n",
+    "- VaR at 95% indicates the maximum expected loss in 95% of cases\n",
+    "- It's a standard risk measure in portfolio management\n",
+    "- Example: If VaR 95% = $8,500, there's only a 5% chance of ending below this value"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Connection to Black-Scholes\n",
+    "\n",
+    "The Black-Scholes model uses exactly the same GBM process:\n",
+    "\n",
+    "| Approach | Use Case | Method |\n",
+    "|----------|----------|--------|\n",
+    "| **Black-Scholes** | European options | Closed-form analytical solution |\n",
+    "| **Monte Carlo** | Complex derivatives, portfolio analysis | Numerical simulation |\n",
+    "\n",
+    "Both share:\n",
+    "- The same price dynamics: $dS = \\mu S \\, dt + \\sigma S \\, dW$\n",
+    "- The same parameters ($\\mu$, $\\sigma$)\n",
+    "- The assumption of log-normal returns\n",
+    "\n",
+    "**Why use Monte Carlo instead of Black-Scholes?**\n",
+    "- Path-dependent options (Asian, barrier, lookback)\n",
+    "- American options (early exercise)\n",
+    "- Multi-asset portfolios\n",
+    "- Complex payoff structures"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Model Limitations\n",
+    "\n",
+    "1. **Constant volatility assumption**: In reality, volatility is time-varying (see GARCH models)\n",
+    "2. **Log-normal returns**: Markets exhibit fat tails and excess kurtosis\n",
+    "3. **Independence**: Daily returns show some autocorrelation (momentum, mean reversion)\n",
+    "4. **Historical estimation**: Past performance doesn't guarantee future results\n",
+    "\n",
+    "These limitations are shared with Black-Scholes — practitioners often use more sophisticated models:\n",
+    "- GARCH for volatility clustering\n",
+    "- Stochastic volatility (Heston model)\n",
+    "- Jump-diffusion processes\n",
+    "\n",
+    "As Warren Buffett noted, these models can give \"an illusion of precision\" — always combine quantitative analysis with fundamental understanding."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Summary\n",
+    "\n",
+    "This notebook demonstrated:\n",
+    "\n",
+    "1. **Data acquisition**: Downloading historical prices via yfinance\n",
+    "2. **Parameter estimation**: Computing annualized return (μ) and volatility (σ)\n",
+    "3. **GBM simulation**: Generating thousands of possible future price paths\n",
+    "4. **Risk analysis**: VaR, percentiles, probability of profit/loss\n",
+    "5. **Visualization**: Price paths and final value distribution\n",
+    "\n",
+    "The Monte Carlo framework is foundational for:\n",
+    "- Portfolio risk management\n",
+    "- Option pricing (when closed-form solutions don't exist)\n",
+    "- Stress testing and scenario analysis"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.11.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
