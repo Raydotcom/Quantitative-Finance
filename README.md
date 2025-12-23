@@ -51,13 +51,6 @@ quantitative-finance/
 
 ## 🚀 Quick Start
 
-### Installation
-
-```bash
-git clone https://github.com/YOUR_USERNAME/quantitative-finance.git
-cd quantitative-finance
-pip install -r requirements.txt
-```
 
 ### Option Pricing (Black-Scholes)
 
